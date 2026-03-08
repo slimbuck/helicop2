@@ -1,6 +1,6 @@
 struct Uniforms {
-    gridSize: vec3<u32>,
-    pad: u32,
+        gridSize: vec3<u32>,
+        pad: u32,
 }
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -8,11 +8,11 @@ struct Uniforms {
 
 @compute @workgroup_size(4, 4, 4)
 fn main(@builtin(global_invocation_id) globalId: vec3<u32>) {
-    if globalId.x >= uniforms.gridSize.x || 
-       globalId.y >= uniforms.gridSize.y || 
-       globalId.z >= uniforms.gridSize.z {
-        return;
-    }
-    
-    textureStore(voxelGrid, vec3<i32>(globalId), vec4<f32>(0.0, 0.0, 0.0, 0.0));
+        if globalId.x >= uniforms.gridSize.x || 
+              globalId.y >= uniforms.gridSize.y || 
+              globalId.z >= uniforms.gridSize.z {
+                return;
+        }
+        
+        textureStore(voxelGrid, vec3<i32>(globalId), vec4<f32>(0.0, 0.0, 0.0, 0.0));
 }
