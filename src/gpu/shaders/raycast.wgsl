@@ -42,12 +42,14 @@ fn getRay(pixelCoord: vec2<f32>) -> vec3<f32> {
     let up = cross(right, forward);
     
     // Calculate ray direction using FOV and aspect ratio
+    // FOV applies to largest axis (horizontal in landscape, vertical in portrait)
     let aspect = camera.screenSize.x / camera.screenSize.y;
     let tanHalfFov = tan(camera.fov * 0.5);
+    let scale = max(aspect, 1.0);
     
     // Offset from center based on pixel position
-    let horizontal = right * (ndc.x * tanHalfFov * aspect);
-    let vertical = up * (ndc.y * tanHalfFov);
+    let horizontal = right * (ndc.x * tanHalfFov * aspect / scale);
+    let vertical = up * (ndc.y * tanHalfFov / scale);
     
     return normalize(forward + horizontal + vertical);
 }
