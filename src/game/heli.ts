@@ -5,12 +5,30 @@ import { RigidBody } from '../physics/rigid';
 import { Input } from '../input';
 import type { World } from './world';
 
+// Rotor tuning parameters
+const ROTOR_CONFIG = {
+    spinUpTime: 2.0,      // seconds from 0 to full speed
+    spinDownTime: 4.0,    // seconds from full to 0
+    blurRPS: 8,           // rotations per second at full speed
+    
+    // Easing curve for rotor acceleration (t: 0-1 -> output: 0-1)
+    // Starts slow, accelerates in middle, slows near max (like real turbine)
+    spinCurve: (t: number) => t < 0.5
+        ? 2 * t * t
+        : 1 - Math.pow(-2 * t + 2, 2) / 2,  // ease-in-out quad
+    
+    // Curve mapping rotor speed (0-1) to thrust multiplier (0-1)
+    // Can be tuned for game feel
+    thrustCurve: (rotorSpeed: number) => rotorSpeed * rotorSpeed,  // quadratic
+};
+
 export class Helicopter extends Entity {
     body: RigidBody;
     
-    // Control state
-    private rotorPos = 0;
-    private rotorSpeed = 0;
+    // Rotor state
+    private rotorPos = 0;      // blade rotation position
+    private rotorT = 0;        // normalized rotor progress (0 = stopped, 1 = full)
+    private rotorSpeed = 0;    // actual rotor speed after curve applied
     
     // State
     destroyed = false;
@@ -37,9 +55,10 @@ export class Helicopter extends Entity {
     }
 
     update(dt: number, input: Input): void {
+        // Update rotor first (needed for thrust calculation)
+        this.updateRotor(dt, input.thrust);
+        
         if (this.destroyed) {
-            this.rotorSpeed = damp(this.rotorSpeed, 0, 0.1, dt);
-            this.rotorPos += this.rotorSpeed * dt;
             return;
         }
         
@@ -60,29 +79,49 @@ export class Helicopter extends Entity {
         // Clamp angle to prevent flipping
         this.body.angle = clamp(this.body.angle, -1.0, 1.0);
         
-        // Apply thrust in helicopter's "up" direction
+        // Apply thrust in helicopter's "up" direction, scaled by thrust curve
         if (thrust) {
-            const verticalThrust = 30;  // upward lift
-            const horizontalThrust = 60; // sideways from tilt
-            const cosA = Math.cos(this.body.angle);
-            const sinA = Math.sin(this.body.angle);
-            
-            // Thrust vector rotated by helicopter angle
-            const thrustForce = new Vec3(
-                -sinA * horizontalThrust,
-                cosA * verticalThrust,
-                0
-            );
-            this.body.applyForce(thrustForce);
+            const thrustScale = ROTOR_CONFIG.thrustCurve(this.rotorSpeed);
+            if (thrustScale > 0.01) {
+                const verticalThrust = 30 * thrustScale;
+                const horizontalThrust = 60 * thrustScale;
+                const cosA = Math.cos(this.body.angle);
+                const sinA = Math.sin(this.body.angle);
+                
+                // Thrust vector rotated by helicopter angle
+                const thrustForce = new Vec3(
+                    -sinA * horizontalThrust,
+                    cosA * verticalThrust,
+                    0
+                );
+                this.body.applyForce(thrustForce);
+            }
         }
         
         // Constrain Z position (2.5D)
         this.body.position.z = clamp(this.body.position.z, -2, 2);
         this.body.velocity.z *= 0.9;
+    }
+    
+    private updateRotor(dt: number, thrust: boolean): void {
+        const wantsRotor = thrust || !this.body.grounded;
         
-        // Update rotor animation
-        this.rotorSpeed = damp(this.rotorSpeed, thrust ? 1 : 0.3, 0.1, dt);
-        this.rotorPos += this.rotorSpeed * dt;
+        if (this.destroyed) {
+            // Spin down when destroyed
+            this.rotorT = Math.max(0, this.rotorT - dt / ROTOR_CONFIG.spinDownTime);
+        } else if (wantsRotor && this.rotorT < 1) {
+            // Spinning up
+            this.rotorT = Math.min(1, this.rotorT + dt / ROTOR_CONFIG.spinUpTime);
+        } else if (!wantsRotor && this.rotorT > 0) {
+            // Spinning down
+            this.rotorT = Math.max(0, this.rotorT - dt / ROTOR_CONFIG.spinDownTime);
+        }
+        
+        // Apply easing curve to get actual rotor speed
+        this.rotorSpeed = ROTOR_CONFIG.spinCurve(this.rotorT);
+        
+        // Update blade rotation position (scaled by blurRPS for visual speed)
+        this.rotorPos += this.rotorSpeed * ROTOR_CONFIG.blurRPS * dt;
     }
 
     private transformLocal(local: Vec3, cosA: number, sinA: number): Vec3 {
@@ -131,61 +170,51 @@ export class Helicopter extends Entity {
             VoxelColor.Red
         );
         
-        // Rotor hub position (above cockpit)
-        const rotorLocal = new Vec3(0, 3.5, 0);
-        const rotorWorld = this.transformLocal(rotorLocal, cosA, sinA);
-        const rotorSpinning = this.rotorSpeed > 0.5;
+        // Helper: rotation matrix for XZ plane (around Y) combined with helicopter tilt (around Z)
+        const xzRotMatrix = (angle: number) => {
+            const c = Math.cos(angle), s = Math.sin(angle);
+            return [
+                cosA * c, -sinA, cosA * s,
+                sinA * c, cosA, sinA * s,
+                -s, 0, c
+            ];
+        };
+        
+        // Helper: rotation matrix for XY plane (around Z) combined with helicopter tilt (around Z)
+        const xyRotMatrix = (angle: number) => {
+            const c = Math.cos(angle), s = Math.sin(angle);
+            return [
+                cosA * c - sinA * s, -(cosA * s + sinA * c), 0,
+                sinA * c + cosA * s, -sinA * s + cosA * c, 0,
+                0, 0, 1
+            ];
+        };
+        
+        const rotorSpinning = this.rotorSpeed >= 1.0;
+        
+        // Main rotor (above cockpit, spins in XZ plane)
+        const mainRotorPos = this.transformLocal(new Vec3(0, 4.0, 0), cosA, sinA);
+        const mainAngle = rotorSpinning ? this.rotorPos * 0.5 : this.rotorPos * Math.PI * 2;
+        const mainMatrix = xzRotMatrix(mainAngle);
         
         if (rotorSpinning) {
-            shapes.obb(
-                rotorWorld,
-                new Vec3(6, 0.3, 6),
-                rotMatrix,
-                VoxelColor.LightBlue
-            );
+            shapes.obb(mainRotorPos, new Vec3(6, 0.3, 6), mainMatrix, VoxelColor.LightBlue);
         } else {
-            const bladeAngle = this.rotorPos * Math.PI * 2;
-            const bladeLen = 6;
-            
-            for (let i = 0; i < 2; i++) {
-                const a = bladeAngle + i * Math.PI;
-                const dx = Math.cos(a) * bladeLen;
-                const dz = Math.sin(a) * bladeLen;
-                
-                shapes.line(
-                    new Vec3(rotorWorld.x - dx, rotorWorld.y, rotorWorld.z - dz),
-                    new Vec3(rotorWorld.x + dx, rotorWorld.y, rotorWorld.z + dz),
-                    VoxelColor.LightBlue
-                );
-            }
+            shapes.obb(mainRotorPos, new Vec3(8.5, 0.3, 0.4), mainMatrix, VoxelColor.LightBlue);
+            shapes.obb(mainRotorPos, new Vec3(0.4, 0.3, 8.5), mainMatrix, VoxelColor.LightBlue);
         }
         
-        // Tail rotor (at end of tail boom) - spins in XY plane (flat in Z)
+        // Tail rotor (at tail boom, spins in XY plane)
         const tailRotorPos = this.transformLocal(new Vec3(-10, 1, 2), cosA, sinA);
-        const tailRotorAngle = this.rotorPos * Math.PI * 8; // Spin faster than main rotor
-        const tCos = Math.cos(tailRotorAngle);
-        const tSin = Math.sin(tailRotorAngle);
+        const tailAngle = rotorSpinning ? this.rotorPos * 0.8 : this.rotorPos * Math.PI * 8;
+        const tailMatrix = xyRotMatrix(tailAngle);
         
-        // Combined rotation: helicopter tilt (around Z) then tail rotor spin (around Z)
-        const tailRotMatrix = [
-            cosA * tCos - sinA * tSin, -(cosA * tSin + sinA * tCos), 0,
-            sinA * tCos + cosA * tSin, -sinA * tSin + cosA * tCos, 0,
-            0, 0, 1
-        ];
-        
-        // Draw two blades
-        shapes.obb(
-            tailRotorPos,
-            new Vec3(2.5, 0.3, 0.2),
-            tailRotMatrix,
-            VoxelColor.LightBlue
-        );
-        shapes.obb(
-            tailRotorPos,
-            new Vec3(0.3, 2.5, 0.2),
-            tailRotMatrix,
-            VoxelColor.LightBlue
-        );
+        if (rotorSpinning) {
+            shapes.obb(tailRotorPos, new Vec3(1.5, 1.5, 0.2), tailMatrix, VoxelColor.LightBlue);
+        } else {
+            shapes.obb(tailRotorPos, new Vec3(2.1, 0.3, 0.2), tailMatrix, VoxelColor.LightBlue);
+            shapes.obb(tailRotorPos, new Vec3(0.3, 2.1, 0.2), tailMatrix, VoxelColor.LightBlue);
+        }
     }
 
     getPosition(): Vec3 {

@@ -512,11 +512,13 @@ export class VoxelPipeline {
         const device = this.gpu.device;
         const commands = world.shapes.getCommands();
         
-        // Center grid around camera target so nearby objects are always in the grid
+        // Center grid around camera target, snapped to voxel boundaries to prevent aliasing
+        const voxelWorldSize = 1 / this.voxelScale;
+        const snap = (v: number) => Math.floor(v / voxelWorldSize) * voxelWorldSize;
         const gridOffset = new Vec3(
-            world.cameraTarget.x - this.gridSize.x / (2 * this.voxelScale),
-            -this.gridSize.y / (2 * this.voxelScale),  // Keep Y fixed at ground level
-            -this.gridSize.z / (2 * this.voxelScale)   // Keep Z centered
+            snap(world.cameraTarget.x - this.gridSize.x / (2 * this.voxelScale)),
+            snap(-this.gridSize.y / (2 * this.voxelScale)),
+            snap(-this.gridSize.z / (2 * this.voxelScale))
         );
         
         this.frameCount++;

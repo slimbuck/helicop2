@@ -251,15 +251,28 @@ export class SimplePhysicsWorld {
     }
 
     collideSkidPoints(body: RigidBody, worldPoints: Vec3[], restitution = 0.2): void {
-        if (!this.heightfield) return;
-        
         let anyGrounded = false;
         const stiffness = 800;
         const damping = 40;
         
         for (const point of worldPoints) {
-            const groundY = this.heightfield.getHeightAt(point.x);
-            const penetration = groundY - point.y;
+            // Find the highest surface at this point (heightfield or static box)
+            let surfaceY = -Infinity;
+            
+            // Check heightfield
+            if (this.heightfield) {
+                surfaceY = Math.max(surfaceY, this.heightfield.getHeightAt(point.x));
+            }
+            
+            // Check static boxes (buildings)
+            for (const box of this.staticBoxes) {
+                if (point.x >= box.min.x && point.x <= box.max.x &&
+                    point.z >= box.min.z && point.z <= box.max.z) {
+                    surfaceY = Math.max(surfaceY, box.max.y);
+                }
+            }
+            
+            const penetration = surfaceY - point.y;
             
             if (penetration > 0) {
                 anyGrounded = true;
