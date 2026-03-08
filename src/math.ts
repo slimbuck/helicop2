@@ -144,14 +144,16 @@ export class Mat4 {
   perspective(fov: number, aspect: number, near: number, far: number): this {
     const f = 1 / Math.tan(fov / 2);
     const rangeInv = 1 / (near - far);
+    // FOV applies to largest axis (horizontal in landscape, vertical in portrait)
+    const scale = Math.max(aspect, 1.0);
 
     // Row-major perspective matrix for WebGPU (depth range [0, 1])
-    this.m[0] = f / aspect;
+    this.m[0] = f * scale / aspect;
     this.m[1] = 0;
     this.m[2] = 0;
     this.m[3] = 0;
     this.m[4] = 0;
-    this.m[5] = f;
+    this.m[5] = f * scale;
     this.m[6] = 0;
     this.m[7] = 0;
     this.m[8] = 0;

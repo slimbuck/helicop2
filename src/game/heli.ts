@@ -62,8 +62,8 @@ export class Helicopter extends Entity {
     
     // Apply thrust in helicopter's "up" direction
     if (thrust) {
-      const verticalThrust = 28.5;  // upward lift
-      const horizontalThrust = 114; // sideways from tilt
+      const verticalThrust = 30;  // upward lift
+      const horizontalThrust = 60; // sideways from tilt
       const cosA = Math.cos(this.body.angle);
       const sinA = Math.sin(this.body.angle);
       
